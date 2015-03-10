@@ -1,17 +1,18 @@
+import atexit
+import cgi
+import functools
+import optparse
 import os
 import re
-import sys
-import cgi
 import shutil
-import atexit
+import sys
 import tempfile
-import warnings
 import textwrap
-import functools
+import warnings
+from fnmatch import fnmatch
 from subprocess import check_call
+
 import pkg_resources
-import glob
-import optparse
 
 try:
     import wheel as _; _
@@ -194,10 +195,10 @@ class Pip2PiOptionParser(optparse.OptionParser):
         An unknown option pass-through implementation of OptionParser.
 
         When unknown arguments are encountered, bundle with largs and try again,
-        until rargs is depleted.  
+        until rargs is depleted.
 
         sys.exit(status) will still be called if a known argument is passed
-        incorrectly (e.g. missing arguments or bad argument types, etc.)        
+        incorrectly (e.g. missing arguments or bad argument types, etc.)
 
         From http://stackoverflow.com/a/9307174/6364
         """
@@ -234,13 +235,20 @@ def dir2pi(argv=sys.argv, use_symlink=None):
                 packages/simple/foo/
                 packages/simple/foo/index.html
                 packages/simple/foo/foo-1.2.tar.gz
+
+            If a .dir2piignores file is present in packages/,
+            dir2pi will ignore files matching patterns. Use standard
+            unix globs.
         """))
 
     if use_symlink is not None:
         warnings.warn("dir2pi(use_symlink=...) is deprecated", stacklevel=1)
 
     parser.add_index_options()
-
+    parser.add_option(
+        '--ignore',
+        help=dedent("""Ignore files in directory matching fileglobs; patterns
+            seperated with a \',\'"""))
     option, argv = parser.parse_args(argv)
     if len(argv) != 2:
         parser.print_help()
@@ -253,6 +261,12 @@ def _dir2pi(option, argv):
         raise ValueError("no such directory: %r" %(pkgdir, ))
     pkgdirpath = lambda *x: os.path.join(pkgdir, *x)
 
+    if len(option.ignore):
+        ignores = [fglob for fglob in optoins.ignore.split(',')]
+    else:
+        with open(pkgdirpath + os.path.sep + '.dir2piignores') as ignorefile:
+            ignores = ignorefile.readlines()[:-1]
+
     shutil.rmtree(pkgdirpath("simple"), ignore_errors=True)
     os.mkdir(pkgdirpath("simple"))
     pkg_index = ("<html><head><title>Simple Index</title>"
@@ -261,6 +275,15 @@ def _dir2pi(option, argv):
     warn_normalized_pkg_names = []
 
     for file in os.listdir(pkgdir):
+
+        match = False
+        for fglob in ignores:
+            if fnmatch(file, fglob):
+                match = True
+                break
+        if match:
+            continue
+
         pkg_filepath = os.path.join(pkgdir, file)
         if not os.path.isfile(pkg_filepath):
             continue
